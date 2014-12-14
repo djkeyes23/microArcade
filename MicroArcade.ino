@@ -6,6 +6,8 @@
 #include "Adafruit_GFX.h"
 #include "stdlib.h"
 #include "math.h"
+#include <LiquidCrystal.h>
+LiquidCrystal lcd(12, 11, 5, 4, 3, 2);
 
 class Board		//Contains necessary values to keep track of the game
 {
@@ -89,6 +91,15 @@ public:
   boolean getPaused() {
     return paused;
   }
+  
+  //MODIFIES: nothing 
+  //EFFECTS: returns BlockHits
+  int getBlockHits();
+
+  //MODIFIES: BlockHits 
+  //EFFECTS: sets BlockHits to input
+   int setBlockHits(int input);
+
 
   //MODIFIES: strength array, ballRow, ballCol, BallRight, ballDown
   //EFFECTS: first sets up the ball so that it is on top of the paddle
@@ -129,6 +140,7 @@ public:
   boolean hitBlock();
 
 private:
+  int blockHits;
   int paddlePos;		//Leftmost position of the paddle
   int paddleHeight;	// height of the upper paddle
   int lives;			//Number of lives left
@@ -141,6 +153,7 @@ private:
   boolean paused;			// Pause after ball loss
 
 };
+
 
 //EFFECTS:displays the number of lives remaining/level number on the board. If it doesn't all fit
 //on the board at once, the text scrolls.
@@ -159,18 +172,39 @@ Adafruit_8x16matrix matrix = Adafruit_8x16matrix();
 struct Pins{
 
   int potPin; 	        //input pin potentiometer
-  int val;		//value of the potentiometer
+  int val;
+  int smoothval;		//value of the potentiometer
   int button;		//input pin for the button
   int buttonState; // current state of the button
+  
 };
 
 Board board;				// declare playing field
-Pins pins;					// pins to be used for game input
+Pins pins;
+					// pins to be used for game input
+int   sensorPin = 2;                    // sensor input pin
+int   rawVal = 0;                       // sensor raw value
+float smoothedVal = 0.0;                // sensor smoothed value
+float smoothStrength = 2;               // amount of smoothing (default 10)
+
 
 
 void setup()
 {
-  Serial.begin(9600);
+	String introMessage = "                Breaker Breaker Master";
+	lcd.begin(16, 2); // set up the LCD's number of columns and rows: 
+	lcd.clear();
+	lcd.print(introMessage); // Print intro message to the LCD.
+	delay(100); //set to 100
+
+	for (int positionCounter = 0; positionCounter < 38; positionCounter++)
+	{
+		lcd.scrollDisplayLeft(); // scroll one position left:
+		delay(300); // wait a bit, for LCD refresh set to 300
+	}
+
+  lcd.clear();
+	
   pins.potPin=2;
   pins.val=0;
   pins.button=7; 
@@ -179,21 +213,40 @@ void setup()
   clearBoard();			//Set entire board to 'off'
   initStrength(board.strength);                    //set all strengths to 0	
 
-  printMessage(board.getLives());
-  printMessage(" lives");  
 }
-
 
 void loop()
 {
-  Serial.print("pot val = "); // debugging statements
-  Serial.println(pins.val);
+        rawVal = analogRead(sensorPin);
+        smoothedVal = smooth(rawVal, smoothedVal);
+    
+        int gameTime = ((millis() / 1000) - 11);
+	int score = ((board.getBlockHits()*100) - gameTime);
+	int lives = board.getLives();
+	int level = board.getLevel();
+
+	lcd.setCursor(0, 0);
+
+	lcd.print("Score:");
+	lcd.print(score);
+
+	lcd.setCursor(13, 0);
+	lcd.print("L:");
+	lcd.print(lives);
+
+	lcd.setCursor(0, 1);
+	lcd.print("T:");
+	lcd.print(gameTime);
+
+    lcd.setCursor(11, 1);
+    lcd.print("Lvl:");
+    lcd.print(level);
 
   // set all pixels on the game board to LED_OFF
   clearBoard();
 
   // read the current value of the analog input for the paddle
-  pins.val = analogRead(pins.potPin);  // get value from sensor
+  pins.val = smoothedVal;  // get value from sensor
 
   // read the current value of the button
   pins.buttonState = digitalRead(pins.button);
@@ -205,8 +258,6 @@ void loop()
 
   // update the position of the paddle based on the input range
   board.setPaddlePos(calculatePaddlePosition(pins.val));
-  Serial.print("pot val = ");
-  Serial.print(pins.val);
 
   // draw the lower paddle on the board
   matrix.drawPixel( board.getPaddlePos(), 15, LED_ON);
@@ -220,9 +271,6 @@ void loop()
   if(board.levelComplete()){     //checks if the level is done
     board.setLevel(board.getLevel()+1);			// increment the board level
     board.initBoard();							// initialize the state of the board for the new level
-
-    printMessage("Level ");
-    printMessage(board.getLevel());
 
     // pause the game to start a new level
     board.setPause();
@@ -310,6 +358,7 @@ boolean Board::hitBlock()
     if(ballDown){
       if(ballRow+1<16 && ballCol+1<8 && strength[ballCol+1][ballRow+1]>0){
         strength[ballCol+1][ballRow+1]--;
+        blockHits++;
         if( ((ballCol+1) % 2) == 0) {
           strength[ballCol+2][ballRow+1]--;
         }
@@ -326,6 +375,7 @@ boolean Board::hitBlock()
     else{
       if(ballRow-1 >=0 && ballCol+1<8 && strength[ballCol+1][ballRow-1]>0){
         strength[ballCol+1][ballRow-1]--;
+        blockHits++;
         if( ((ballCol+1) % 2) == 0) {
           strength[ballCol+2][ballRow-1]--;
         }
@@ -347,6 +397,7 @@ boolean Board::hitBlock()
         //Serial.print( strength[ballCol-1][ballRow+1]);
         Serial.println(" block strength2");
         strength[ballCol-1][ballRow+1]--;
+        blockHits++;
         if( ((ballCol-1) % 2) == 0) {
           strength[ballCol][ballRow+1]--;
         }
@@ -363,7 +414,7 @@ boolean Board::hitBlock()
     else{
       if(ballRow-1>=0 && ballCol-1>=0 && strength[ballCol-1][ballRow-1]>0){
         strength[ballCol-1][ballRow-1]--;
-
+        blockHits++;
         if( ((ballCol-1) % 2) == 0) {
           strength[ballCol][ballRow-1]--;
         }
@@ -385,7 +436,7 @@ boolean Board::hitBlock()
         //Serial.print( strength[ballCol-1][ballRow+1]);
         Serial.println(" block strength2");
         strength[ballCol][ballRow+1]--;
-
+        blockHits++;
         if( ((ballCol) % 2) == 0) {
           strength[ballCol+1][ballRow+1]--;
         }
@@ -401,6 +452,7 @@ boolean Board::hitBlock()
     else{
       if( strength[ballCol][ballRow-1] > 0 ) {
         strength[ballCol][ballRow-1]--;
+        blockHits++;
         if( ((ballCol) % 2) == 0) {
           strength[ballCol+1][ballRow-1]--;
         }
@@ -585,27 +637,27 @@ boolean Board::lostBall(  )
 int calculatePaddlePosition( int val )
 {
   //Since the paddle is two pixels wide, there are 7 possibilities for the leftmost pixel
-  if (val >= 0 && val < 146)
+  if (val >= 0 && val < 359)
   {
     return 0;
   }
-  else if (val >= 146 && val < 292)
+  else if (val >= 360 && val < 468)
   {
     return 1;
   }
-  else if (val >= 292 && val < 438)
+  else if (val >= 469 && val < 577)
   {
     return 2;
   }
-  else if (val >= 438 && val < 584)
+  else if (val >= 578 && val < 687)
   {
     return 3;
   }
-  else if (val >= 584 && val < 730)
+  else if (val >= 688 && val < 796)
   {
     return 4;
   }
-  else if (val >= 730 && val < 876)
+  else if (val >= 797 && val < 905)
   {
     return 5;
   }
@@ -694,6 +746,16 @@ void Board::displayBlocks(  )
   }
 }
 
+int Board::getBlockHits()
+{
+	return blockHits;
+}
+
+int Board::setBlockHits(int input)
+{
+	blockHits = input;
+}
+
 void Board::updateBall()
 {
   if(ballDown){
@@ -753,37 +815,32 @@ boolean Board::levelComplete(){
 void(* resetFunc) (void) = 0; //declare reset function @ address 0
 
 void gameOver(){
-  printMessage("GameOver");
-  delay(3000);
+  
+int gameTime = ((millis() / 1000) - 11);
+int score = ((board.getBlockHits()*100) - gameTime);
+  printMessage("Game Over");
+  delay(2000);
+  lcd.clear();
+  printMessage("Final Score: ");
+  lcd.setCursor(0,2);
+  printMessage(score);
+  delay(8000);
   resetFunc();
 }
 
+float smooth(int t_rawVal, float t_smoothedVal) {
+    return  t_smoothedVal + ((t_rawVal - t_smoothedVal) + 0.5) / smoothStrength;  // +0.5 for rounding
+}
+
 void printMessage(int number) {
-  matrix.setTextSize(1);
-  matrix.setTextWrap(false);  // we dont want text to wrap so it scrolls nicely
-  matrix.setTextColor(LED_ON);
-  for (int8_t x=7; x>=-36; x--) {
-    matrix.clear();
-    matrix.setCursor(x,0);
-    matrix.print(number);
-    matrix.writeDisplay();
-    delay(50);
-  }
+	lcd.print(number); // Print intro message to the LCD.
+	delay(100); //set to 100
   return;
 }
 
 void printMessage(String message) {
-  matrix.setTextSize(1);
-  matrix.setTextWrap(false);  // we dont want text to wrap so it scrolls nicely
-  matrix.setTextColor(LED_ON);
-  for (int8_t x=7; x>=-36; x--) {
-    matrix.clear();
-    matrix.setCursor(x,0);
-    matrix.print(message);
-    matrix.writeDisplay();
-    delay(50);
-  }
+    lcd.clear();
+	lcd.print(message); // Print intro message to the LCD.
+	delay(100); //set to 100
   return;
 }
-
-
